@@ -1,0 +1,49 @@
+#!/bin/sh
+
+mount -t proc -o nosuid,noexec,nodev proc /proc
+mount -t sysfs -o nosuid,noexec,nodev sysfs /sys
+mount -t devtmpfs -o mode=0755,nosuid tmpfs /dev
+mount -t tmpfs -o nosuid,nodev,mode=0755 tmpfs /run
+
+/bin/mdev -s
+/bin/sh /insmod_list
+
+# parse cmdline
+cmdline=$(cat /proc/cmdline)
+for word in $cmdline; do
+    case $word in
+        root=*)
+            root=${word#*=}
+            ;;
+        rootflags=*)
+            rootflags=${word#*=}
+            ;;
+        rootfstype=*)
+            rootfstype=${word#*=}
+            ;;
+        ro | rw)
+            rwopt=$word
+            ;;
+        init=*)
+            init=${word#*=}
+            ;;
+    esac
+done
+
+if [ "$root" ]; then 
+    # parse UUID or LABEL #the busybox [[ is not support *
+    if [ ${root:0:4} != /dev ]; then 
+        root=$(blkid | grep ${root#*=})
+        root=${root%:*}
+    fi
+else
+    echo '''You not define ROOT device, please mount ROOT device to "/new_root" and exit this shell'''
+    /bin/sh
+fi
+
+if ! mount ${rootfstype:+-f $rootfstype} -o ${rwopt:-ro}${rootflags:+,$rootflags} $root /new_root; then
+    echo "mount the ROOT device failed!!!"
+    /bin/sh
+fi
+
+exec switch_root /new_root ${init:-/sbin/init}

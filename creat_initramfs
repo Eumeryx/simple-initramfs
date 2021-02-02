@@ -1,0 +1,90 @@
+#!/bin/bash
+
+ROOTDIR="/"
+BUILDDIR=$(pwd)
+DEPDIR="$BUILDDIR/dep"
+TMPDIR="/tmp/busybox-initramfs"
+
+help_message() {
+    cat <<EOF
+usage: creat_initramfs [OPTION] [ROOT_PATH]
+
+option:
+    -i PATH          inclube extra FILE or DIR.
+    -c PORGRAM[:6]   set compress porgram and level, default gzip.
+    -o NAME          set output file name, default "initramfs.img".
+    -h               print this message.
+
+e.g. creat_initramfs -i PATH -c xz:6 -o ./initramfs.xz /
+EOF
+}
+
+while getopts "c:i:o:h" opt; do
+	case $opt in
+		c)
+			compporg=${OPTARG/:/ -}
+		;;
+		i)
+			extrafile=$(realpath $OPTARG)
+			if ! test -e $extrafile; then
+                echo "cannot access '$extrafile': No such extra FILE or DIR."
+                exit 1
+            fi
+		;;
+		o)
+			if [ ${OPTARG:0:1} == / ]; then
+                    out_name=$OPTARG
+            else
+                    out_name=$BUILDDIR/$OPTARG
+            fi
+		;;
+		h | ?)
+            help_message
+            exit 1
+		;;
+	esac
+done
+# get 1st ROOT_PATH
+shift $(($OPTIND - 1)) && ROOTDIR=${1:-/}
+
+
+if [ -e $TMPDIR ]; then rm -rf $TMPDIR; fi
+mkdir -p $TMPDIR && cd $TMPDIR
+
+# get kernel modules from root device
+if ! cd /sys/devices; then
+    echo "/sys is not mount!"
+    exit 1 
+fi
+
+root=$(findmnt -vno source -T $ROOTDIR)
+devpath=$(udevadm info $root | head -n 1)
+devpath=${devpath#*devices/}
+
+for n in ${devpath///// }; do
+	if [ -e "uevent" ]; then
+		mods="$mods $(grep MODALIAS ./uevent)"
+	fi
+	cd $n
+done
+cd $TMPDIR
+
+mods="$(/sbin/modprobe -qaR ${mods//MODALIAS=}) $(findmnt -uno fstype -T $ROOTDIR)"
+mod_list=$(/sbin/modprobe -aD $mods | awk '!a[$0]++' | tee $TMPDIR/insmod_list)
+
+# creat initramfs rootfs
+mkdir -p $TMPDIR/{bin,dev,sbin,etc,proc,sys,run,lib,root,new_root}
+install $DEPDIR/init $TMPDIR
+install $DEPDIR/busybox-x86_64 $TMPDIR/bin/busybox
+$TMPDIR/bin/busybox --install $TMPDIR/bin
+
+for modfile in ${mod_list//insmod}; do
+    install -D $modfile $TMPDIR$modfile
+done
+
+for ext in $extrafile; do cp -pr $ext $TMPDIR; done
+
+# packing
+cd $TMPDIR && find . | cpio -H newc -R root:root -o --quiet \
+    | ${compporg:-gzip} > ${out_name:-$BUILDDIR/initramfs.img}
+rm -rf $TMPDIR
