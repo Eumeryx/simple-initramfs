@@ -27,9 +27,9 @@ while getopts "c:i:o:h" opt; do
 		i)
 			extrafile=$(realpath $OPTARG)
 			if ! test -e $extrafile; then
-                echo "cannot access '$extrafile': No such extra FILE or DIR."
-                exit 1
-            fi
+                        	echo "cannot access '$extrafile': No such extra FILE or DIR."
+                		exit 1
+            		fi
 		;;
 		o)
 			if [ ${OPTARG:0:1} == / ]; then
